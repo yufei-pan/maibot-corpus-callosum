@@ -1,13 +1,15 @@
 [plugin]
 enabled = true
-config_version = "1.0.0"
+config_version = "1.1.0"
 
 [veto]
-# 哨兵标记名（仅字母/数字/下划线/横线）。replyer 输出 <reject>理由</reject> 即视为否决。
+# 哨兵标记名（仅字母/数字/下划线/横线）。replyer 输出 <reject>理由</reject> 即视为触发再审。
 reject_sentinel = "reject"
-# 同一会话在时间窗口内连续否决达到该次数时，注入文案升级为"立即 finish"强指令。
-max_consecutive_vetoes = 2
-# 连续否决计数的时间窗口（秒），窗口过期后计数自动重置。
+# 连续触发再审达到该次数时，向规划器注入升级警示文案（替代普通再审反馈）。
+escalate_consecutive_vetoes = 2
+# 连续触发再审达到该次数后，不再向 replyer 注入再审协议，也不再拦截哨兵。
+max_consecutive_vetoes = 5
+# 连续触发再审计数的时间窗口（秒），窗口过期后计数自动重置。
 veto_window_seconds = 300
 
 # 以下三个模板留空时使用内置默认文案，可在 WebUI 中自定义。

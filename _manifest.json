@@ -3,7 +3,7 @@
   "id": "com.0-hz.maibot-corpus-callosum",
   "version": "1.0.0",
   "name": "神经闭环反馈",
-  "description": "给 replyer 一条内部否决通道：当规划器指令明显有误时，回复器可拒绝发送，否决理由经内部上下文注入回规划器思考循环，全程群友不可见。",
+  "description": "给 replyer 一条内部再审通道：当回复器认为规划器的回复请求与聊天流严重不符时，可驳回发送并要求规划器重新思考，再审理由经内部上下文注入回规划器思考循环，全程聊天对象不可见。",
   "author": {
     "name": "kes",
     "url": "https://github.com/yufei-pan"
