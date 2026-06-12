@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "id": "com.0-hz.maibot-corpus-callosum",
+  "version": "1.0.0",
+  "name": "神经闭环反馈",
+  "description": "给 replyer 一条内部否决通道：当规划器指令明显有误时，回复器可拒绝发送，否决理由经内部上下文注入回规划器思考循环，全程群友不可见。",
+  "author": {
+    "name": "kes",
+    "url": "https://github.com/yufei-pan"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/yufei-pan/maibot-corpus-callosum",
+    "homepage": "https://github.com/yufei-pan/maibot-corpus-callosum",
+    "documentation": "https://github.com/yufei-pan/maibot-corpus-callosum/blob/main/README.md",
+    "issues": "https://github.com/yufei-pan/maibot-corpus-callosum/issues"
+  },
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.99.99"
+  },
+  "sdk": {
+    "min_version": "2.5.1",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "plugin_type": "extension",
+  "display": {
+    "icon": {
+      "type": "lucide",
+      "value": "brain"
+    }
+  },
+  "capabilities": [
+    "maisaka.context.append"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  }
+}

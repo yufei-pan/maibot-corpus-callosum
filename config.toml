@@ -1,0 +1,19 @@
+[plugin]
+enabled = true
+config_version = "1.0.0"
+
+[veto]
+# 哨兵标记名（仅字母/数字/下划线/横线）。replyer 输出 <reject>理由</reject> 即视为否决。
+reject_sentinel = "reject"
+# 同一会话在时间窗口内连续否决达到该次数时，注入文案升级为"立即 finish"强指令。
+max_consecutive_vetoes = 2
+# 连续否决计数的时间窗口（秒），窗口过期后计数自动重置。
+veto_window_seconds = 300
+
+# 以下三个模板留空时使用内置默认文案，可在 WebUI 中自定义。
+# protocol_prompt 占位符：{sentinel}
+# injection_template 占位符：{reason}、{count}
+# escalation_template 占位符：{reason}、{count}
+protocol_prompt = ""
+injection_template = ""
+escalation_template = ""
