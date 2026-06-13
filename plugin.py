@@ -16,6 +16,8 @@
 
 import re
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from maibot_sdk import Field, HookHandler, MaiBotPlugin, PluginConfigBase
@@ -29,6 +31,12 @@ HOOK_TIMEOUT_MS = 30000
 _SENTINEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 DEFAULT_SENTINEL = "reject"
+
+CURRENT_CONFIG_VERSION = "1.2.0"
+
+DEFAULT_ESCALATE_CONSECUTIVE_VETOES = 2
+DEFAULT_MAX_CONSECUTIVE_VETOES = 5
+DEFAULT_VETO_WINDOW_SECONDS = 300
 
 # 注入到 replyer prompt 的再审协议。占位符：{sentinel}
 DEFAULT_PROTOCOL_PROMPT = (
@@ -101,7 +109,7 @@ class PluginSectionConfig(PluginConfigBase):
     __ui_order__ = 0
 
     enabled: bool = Field(default=True, description="是否启用插件")
-    config_version: str = Field(default="1.1.0", description="配置版本")
+    config_version: str = Field(default=CURRENT_CONFIG_VERSION, description="配置版本")
 
 
 class VetoSectionConfig(PluginConfigBase):
@@ -112,38 +120,48 @@ class VetoSectionConfig(PluginConfigBase):
     __ui_order__ = 1
 
     reject_sentinel: str = Field(
-        default=DEFAULT_SENTINEL,
-        description="哨兵标记名（仅字母/数字/下划线/横线）。replyer 输出 <标记>理由</标记> 即视为触发再审。",
+        default="",
+        description="哨兵标记名（仅字母/数字/下划线/横线）。replyer 输出 <标记>理由</标记> 即视为触发再审。留空使用插件内置默认。",
+        json_schema_extra={"placeholder": DEFAULT_SENTINEL},
     )
-    escalate_consecutive_vetoes: int = Field(
-        default=2,
+    escalate_consecutive_vetoes: int | None = Field(
+        default=None,
+        ge=1,
         description=(
             "同一会话在时间窗口内连续触发再审达到该次数时，向规划器注入升级警示文案"
-            "（替代普通再审反馈）。"
+            "（替代普通再审反馈）。留空使用插件内置默认。"
         ),
+        json_schema_extra={"placeholder": str(DEFAULT_ESCALATE_CONSECUTIVE_VETOES)},
     )
-    max_consecutive_vetoes: int = Field(
-        default=5,
+    max_consecutive_vetoes: int | None = Field(
+        default=None,
+        ge=1,
         description=(
             "同一会话在时间窗口内连续触发再审达到该次数后，不再向 replyer 注入再审协议，"
-            "也不再拦截哨兵，强制其按正常流程生成回复。"
+            "也不再拦截哨兵，强制其按正常流程生成回复。留空使用插件内置默认。"
         ),
+        json_schema_extra={"placeholder": str(DEFAULT_MAX_CONSECUTIVE_VETOES)},
     )
-    veto_window_seconds: int = Field(
-        default=300,
-        description="连续触发再审计数的时间窗口（秒），窗口过期后计数自动重置。",
+    veto_window_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="连续触发再审计数的时间窗口（秒），窗口过期后计数自动重置。留空使用插件内置默认。",
+        json_schema_extra={"placeholder": str(DEFAULT_VETO_WINDOW_SECONDS)},
     )
     protocol_prompt: str = Field(
         default="",
         description="注入 replyer 的再审协议文案，留空使用内置默认。占位符：{sentinel}。",
+        json_schema_extra={"placeholder": DEFAULT_PROTOCOL_PROMPT},
     )
     injection_template: str = Field(
         default="",
         description="触发再审时注入规划器上下文的内部消息模板，留空使用内置默认。占位符：{reason}、{count}。",
+        json_schema_extra={"placeholder": DEFAULT_INJECTION_TEMPLATE},
     )
     escalation_template: str = Field(
         default="",
         description="达到 escalate_consecutive_vetoes 时注入规划器的升级文案模板，留空使用内置默认。占位符：{reason}、{count}。",
+        json_schema_extra={"placeholder": DEFAULT_ESCALATION_TEMPLATE},
     )
 
 
@@ -152,6 +170,98 @@ class CorpusCallosumConfig(PluginConfigBase):
 
     plugin: PluginSectionConfig = Field(default_factory=PluginSectionConfig)
     veto: VetoSectionConfig = Field(default_factory=VetoSectionConfig)
+
+
+# --------------------------------------------------------------------------- #
+# 配置解析（空值 = 使用代码内置默认，便于版本升级后自动跟随新默认）
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class EffectiveVetoConfig:
+    """运行时生效的再审配置（已解析占位空值）。"""
+
+    reject_sentinel: str
+    escalate_consecutive_vetoes: int
+    max_consecutive_vetoes: int
+    veto_window_seconds: int
+    protocol_prompt: str
+    injection_template: str
+    escalation_template: str
+
+
+def _effective_int(value: int | None, default: int, *, minimum: int = 1) -> int:
+    if value is None:
+        return default
+    return max(minimum, int(value))
+
+
+def _effective_template(value: str | None, default: str) -> str:
+    if value is None or not str(value).strip():
+        return default
+    return str(value)
+
+
+def _normalize_sentinel(value: str | None) -> str:
+    sentinel = str(value or "").strip()
+    if not sentinel or not _SENTINEL_NAME_RE.match(sentinel):
+        return DEFAULT_SENTINEL
+    return sentinel
+
+
+def resolve_effective_veto_config(veto: VetoSectionConfig) -> EffectiveVetoConfig:
+    max_vetoes = _effective_int(veto.max_consecutive_vetoes, DEFAULT_MAX_CONSECUTIVE_VETOES)
+    escalate = _effective_int(veto.escalate_consecutive_vetoes, DEFAULT_ESCALATE_CONSECUTIVE_VETOES)
+    if escalate > max_vetoes:
+        escalate = max_vetoes
+    return EffectiveVetoConfig(
+        reject_sentinel=_normalize_sentinel(veto.reject_sentinel),
+        escalate_consecutive_vetoes=escalate,
+        max_consecutive_vetoes=max_vetoes,
+        veto_window_seconds=_effective_int(veto.veto_window_seconds, DEFAULT_VETO_WINDOW_SECONDS),
+        protocol_prompt=_effective_template(veto.protocol_prompt, DEFAULT_PROTOCOL_PROMPT),
+        injection_template=_effective_template(veto.injection_template, DEFAULT_INJECTION_TEMPLATE),
+        escalation_template=_effective_template(veto.escalation_template, DEFAULT_ESCALATION_TEMPLATE),
+    )
+
+
+_LEGACY_BAKED_VETO_DEFAULTS: dict[str, int | str] = {
+    "reject_sentinel": DEFAULT_SENTINEL,
+    "escalate_consecutive_vetoes": DEFAULT_ESCALATE_CONSECUTIVE_VETOES,
+    "max_consecutive_vetoes": DEFAULT_MAX_CONSECUTIVE_VETOES,
+    "veto_window_seconds": DEFAULT_VETO_WINDOW_SECONDS,
+    "protocol_prompt": DEFAULT_PROTOCOL_PROMPT,
+    "injection_template": DEFAULT_INJECTION_TEMPLATE,
+    "escalation_template": DEFAULT_ESCALATION_TEMPLATE,
+}
+
+
+def _migrate_legacy_baked_defaults(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """将旧版 config.toml 中写死的默认值还原为占位空值，以便跟随代码内置默认。"""
+    veto = config.get("veto")
+    if not isinstance(veto, dict):
+        return config, False
+
+    changed = False
+    for key, legacy_value in _LEGACY_BAKED_VETO_DEFAULTS.items():
+        if key not in veto:
+            continue
+        current = veto[key]
+        if isinstance(legacy_value, str):
+            if str(current) != legacy_value:
+                continue
+            veto[key] = ""
+        elif current == legacy_value:
+            veto[key] = None
+        else:
+            continue
+        changed = True
+
+    plugin_section = config.get("plugin")
+    if isinstance(plugin_section, dict):
+        plugin_section["config_version"] = CURRENT_CONFIG_VERSION
+
+    return config, changed
 
 
 class CorpusCallosumPlugin(MaiBotPlugin):
@@ -165,14 +275,24 @@ class CorpusCallosumPlugin(MaiBotPlugin):
         self._enabled: bool = True
         self._sentinel: str = DEFAULT_SENTINEL
         self._sentinel_re: re.Pattern[str] = self._build_sentinel_re(DEFAULT_SENTINEL)
-        self._escalate_consecutive_vetoes: int = 2
-        self._max_consecutive_vetoes: int = 5
-        self._veto_window_seconds: float = 300.0
+        self._escalate_consecutive_vetoes: int = DEFAULT_ESCALATE_CONSECUTIVE_VETOES
+        self._max_consecutive_vetoes: int = DEFAULT_MAX_CONSECUTIVE_VETOES
+        self._veto_window_seconds: float = float(DEFAULT_VETO_WINDOW_SECONDS)
         self._protocol_prompt: str = DEFAULT_PROTOCOL_PROMPT
         self._injection_template: str = DEFAULT_INJECTION_TEMPLATE
         self._escalation_template: str = DEFAULT_ESCALATION_TEMPLATE
         # session_id -> (连续触发再审次数, 最近一次触发时间戳)
         self._veto_counts: dict[str, tuple[int, float]] = {}
+
+    def normalize_plugin_config(
+        self, config_data: Mapping[str, Any] | None
+    ) -> tuple[dict[str, Any], bool]:
+        normalized, changed = super().normalize_plugin_config(config_data)
+        migrated, migrated_changed = _migrate_legacy_baked_defaults(normalized)
+        return migrated, changed or migrated_changed
+
+    def _effective_veto(self) -> EffectiveVetoConfig:
+        return resolve_effective_veto_config(self.config.veto)
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -211,21 +331,20 @@ class CorpusCallosumPlugin(MaiBotPlugin):
     def _refresh_config(self) -> None:
         """从配置模型刷新派生缓存。"""
         self._enabled = bool(self.config.plugin.enabled)
+        effective = self._effective_veto()
 
-        sentinel = str(self.config.veto.reject_sentinel or "").strip()
-        if not _SENTINEL_NAME_RE.match(sentinel):
-            if sentinel:
-                self.ctx.logger.warning(
-                    "哨兵标记名 %r 不合法（仅允许字母/数字/下划线/横线），回退为 %r",
-                    sentinel,
-                    DEFAULT_SENTINEL,
-                )
-            sentinel = DEFAULT_SENTINEL
-        self._sentinel = sentinel
-        self._sentinel_re = self._build_sentinel_re(sentinel)
+        configured_sentinel = str(self.config.veto.reject_sentinel or "").strip()
+        if configured_sentinel and not _SENTINEL_NAME_RE.match(configured_sentinel):
+            self.ctx.logger.warning(
+                "哨兵标记名 %r 不合法（仅允许字母/数字/下划线/横线），回退为 %r",
+                configured_sentinel,
+                DEFAULT_SENTINEL,
+            )
 
-        self._max_consecutive_vetoes = max(1, int(self.config.veto.max_consecutive_vetoes))
-        self._escalate_consecutive_vetoes = max(1, int(self.config.veto.escalate_consecutive_vetoes))
+        self._sentinel = effective.reject_sentinel
+        self._sentinel_re = self._build_sentinel_re(effective.reject_sentinel)
+        self._max_consecutive_vetoes = effective.max_consecutive_vetoes
+        self._escalate_consecutive_vetoes = effective.escalate_consecutive_vetoes
         if self._escalate_consecutive_vetoes > self._max_consecutive_vetoes:
             self.ctx.logger.warning(
                 "escalate_consecutive_vetoes（%d）大于 max_consecutive_vetoes（%d），"
@@ -234,14 +353,10 @@ class CorpusCallosumPlugin(MaiBotPlugin):
                 self._max_consecutive_vetoes,
             )
             self._escalate_consecutive_vetoes = self._max_consecutive_vetoes
-        self._veto_window_seconds = max(1.0, float(self.config.veto.veto_window_seconds))
-        self._protocol_prompt = str(self.config.veto.protocol_prompt or "").strip() or DEFAULT_PROTOCOL_PROMPT
-        self._injection_template = (
-            str(self.config.veto.injection_template or "").strip() or DEFAULT_INJECTION_TEMPLATE
-        )
-        self._escalation_template = (
-            str(self.config.veto.escalation_template or "").strip() or DEFAULT_ESCALATION_TEMPLATE
-        )
+        self._veto_window_seconds = float(effective.veto_window_seconds)
+        self._protocol_prompt = effective.protocol_prompt
+        self._injection_template = effective.injection_template
+        self._escalation_template = effective.escalation_template
 
     @staticmethod
     def _build_sentinel_re(sentinel: str) -> re.Pattern[str]:
