@@ -5,7 +5,8 @@
 - 在 ``maisaka.replyer.before_request`` 注入"再审协议"提示词，告知 replyer
   当规划器提供的回复请求与回复器掌握的聊天流严重不符时，可只输出
   ``<reject>理由</reject>`` 哨兵标记，驳回发送并要求规划器重新思考；
-- 在 ``maisaka.replyer.after_response`` 拦截哨兵：把 ``response`` 置空使
+- 在 ``maisaka.replyer.after_response`` 拦截哨兵：若回复中包含
+  ``<reject>理由</reject>`` 即视为触发再审，把 ``response`` 置空使
   reply 工具静默失败（不向聊天流发送任何内容、不中止思考循环），并通过
   ``ctx.maisaka.context.append`` 把再审理由作为聊天对象不可见的内部消息写回
   规划器聊天历史，供其下一轮重新思考时参考；
@@ -56,37 +57,47 @@ DEFAULT_PROTOCOL_PROMPT = (
 )
 
 # 触发再审时注入规划器上下文的内部消息。占位符：{reason}、{count}
-DEFAULT_INJECTION_TEMPLATE = (
-    "【内部再审反馈·不会发送到聊天流】"
-    "（角色说明：\"规划器\"指负责分析聊天并调用 reply、finish 等工具做决策的内部过程，"
-    "即本条消息的接收方；\"回复器\"指依据回复请求实际撰写回复文本的内部过程。"
-    "若正在阅读的你只负责撰写回复而不能调用工具，本条消息无需你处理。）"
-    "回复器认为规划器刚才的回复请求与其掌握的聊天流严重不符，"
-    "已驳回本次回复并触发再审，要求规划器重新思考。"
-    "随后工具结果中的\"生成可见回复失败\"并非技术故障，而是本次再审驳回的结果；"
-    "规划器请勿原样重试 reply。"
-    "再审理由：{reason}。"
-    "请规划器结合该理由重新审视聊天流：特别注意哪些消息其实是规划器自己刚刚发送的、"
-    "此前发送某条消息的理由或意义、以及是否出现了尚未注意到的新消息。"
-    "请规划器结合上述再审理由和当前聊天流重新判断，再决定下一步采取何种工具或行动。"
-    "若规划器选择再次调用 reply，须修正回复请求、更新回复参考信息，"
-    "并确保已回应驳回理由，不要原样重试。"
-)
+DEFAULT_INJECTION_TEMPLATE = """\
+【内部再审反馈 · 不会发送到聊天流】
+
+角色说明（若你仅负责撰写回复、不能调用工具，可忽略本条）：
+- 规划器：分析聊天并调用 reply、finish 等工具做决策的内部过程（本条消息的接收方）
+- 回复器：依据回复请求实际撰写回复文本的内部过程
+
+发生了什么：
+回复器认为规划器刚才的回复请求与其掌握的聊天流严重不符，已驳回本次回复。
+工具结果中的「生成可见回复失败」并非技术故障，而是本次再审驳回的结果。
+
+再审理由：
+{reason}
+
+请规划器重新审视聊天流，并特别注意：
+- 哪些消息其实是规划器自己刚刚发送的
+- 此前发送某条消息的理由或意义
+- 是否出现了尚未注意到的新消息
+
+后续行动：
+结合上述理由与当前聊天流重新判断，再决定下一步工具或行动。
+若再次调用 reply，须修正回复请求、更新回复参考信息，并回应驳回理由，不要原样重试。"""
 
 # 连续触发再审达到阈值时的升级文案。占位符：{reason}、{count}
-DEFAULT_ESCALATION_TEMPLATE = (
-    "【内部再审反馈·不会发送到聊天流】"
-    "（角色说明：\"规划器\"指负责分析聊天并调用 reply、finish 等工具做决策的内部过程，"
-    "即本条消息的接收方；\"回复器\"指依据回复请求实际撰写回复文本的内部过程。"
-    "若正在阅读的你只负责撰写回复而不能调用工具，本条消息无需你处理。）"
-    "回复器已在短时间内连续 {count} 次触发再审，最新再审理由：{reason}。"
-    "这表明规划器的回复请求与聊天流持续不符；在未厘清驳回理由前，规划器若反复调用 reply，"
-    "虽不会向聊天流发送消息，却会继续在内部被驳回，浪费思考轮次与算力。"
-    "请规划器结合历次驳回理由和当前聊天流重新审视局势，审慎选择下一步的工具或行动，"
-    "不要原样重试。"
-    "若规划器仍决定调用 reply，须修正回复请求、更新回复参考信息，并充分回应历次驳回理由。"
-    "若规划器审视后确认当前不宜再回复，可调用 finish 结束本轮。"
-)
+DEFAULT_ESCALATION_TEMPLATE = """\
+【内部再审反馈 · 升级警示 · 不会发送到聊天流】
+
+角色说明（若你仅负责撰写回复、不能调用工具，可忽略本条）：
+- 规划器：分析聊天并调用 reply、finish 等工具做决策的内部过程（本条消息的接收方）
+- 回复器：依据回复请求实际撰写回复文本的内部过程
+
+发生了什么：
+回复器已在短时间内连续 {count} 次触发再审，表明规划器的回复请求与聊天流持续不符。
+在未厘清驳回理由前，反复调用 reply 虽不会向聊天流发送消息，却会继续在内部被驳回，浪费思考轮次与算力。
+
+最新再审理由：
+{reason}
+
+请规划器结合历次驳回理由和当前聊天流重新审视局势，审慎选择下一步工具或行动，不要原样重试。
+若仍决定调用 reply，须修正回复请求、更新回复参考信息，并充分回应历次驳回理由。
+若审视后确认当前不宜再回复，可调用 finish 结束本轮。"""
 
 
 def _render(template: str, **values: Any) -> str:
@@ -360,9 +371,9 @@ class CorpusCallosumPlugin(MaiBotPlugin):
 
     @staticmethod
     def _build_sentinel_re(sentinel: str) -> re.Pattern[str]:
-        """构建哨兵检测正则：要求 <sentinel>...</sentinel> 锚定输出开头。"""
+        """构建哨兵检测正则：在回复任意位置匹配 <sentinel>...</sentinel>。"""
         escaped = re.escape(sentinel)
-        return re.compile(rf"^\s*<{escaped}>(.*?)</{escaped}>", re.DOTALL)
+        return re.compile(rf"<{escaped}>(.*?)</{escaped}>", re.DOTALL)
 
     # ------------------------------------------------------------------ #
     # 再审计数护栏
@@ -423,7 +434,7 @@ class CorpusCallosumPlugin(MaiBotPlugin):
     @HookHandler(
         "maisaka.replyer.after_response",
         name="intercept_veto",
-        description="检测 replyer 输出的再审哨兵：置空回复阻止发送，并将再审理由注入规划器内部上下文。",
+        description="检测 replyer 回复中的再审哨兵：置空回复阻止发送，并将再审理由注入规划器内部上下文。",
         mode=HookMode.BLOCKING,
         order=HookOrder.EARLY,
         timeout_ms=HOOK_TIMEOUT_MS,
@@ -435,7 +446,7 @@ class CorpusCallosumPlugin(MaiBotPlugin):
 
         session_id = str(kwargs.get("session_id") or "").strip()
         response = str(kwargs.get("response") or "")
-        match = self._sentinel_re.match(response)
+        match = self._sentinel_re.search(response)
         if match is None:
             if session_id:
                 self._reset_veto(session_id)

@@ -40,7 +40,7 @@
 具体实现：
 
 1. `**maisaka.replyer.before_request**` Hook 通过 `extra_prompt` 注入"再审协议"，告知回复器在回复请求与聊天流严重不符时可用哨兵标记驳回并要求重新思考；
-2. `**maisaka.replyer.after_response**` Hook 检测输出开头的 `<reject>...</reject>`：
+2. `**maisaka.replyer.after_response**` Hook 检测回复中的 `<reject>...</reject>`：
   - 把 `response` 改写为空串——reply 工具会返回失败结果，**不向聊天流发送任何内容**，且不中止思考循环；
   - 通过 `maisaka.context.append` 能力把再审理由作为内部消息追加到规划器的聊天历史；
 3. **防死循环护栏**（`veto_window_seconds` 窗口内按会话计数）：
