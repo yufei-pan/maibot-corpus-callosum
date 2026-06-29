@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "com.0-hz.maibot-corpus-callosum",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "name": "神经闭环反馈",
   "description": "给 replyer 一条内部再审通道：当回复器认为规划器的回复请求与聊天流严重不符时，可驳回发送并要求规划器重新思考，再审理由经内部上下文注入回规划器思考循环，全程聊天对象不可见。",
   "author": {
