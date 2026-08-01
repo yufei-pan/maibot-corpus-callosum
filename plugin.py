@@ -16,15 +16,20 @@
 """
 
 import re
+import shutil
 import time
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from maibot_sdk import Field, HookHandler, MaiBotPlugin, PluginConfigBase
 from maibot_sdk.config import validate_plugin_config
 from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
+
+SHIPPED_CONFIG_TEMPLATE_NAME = "config.default.toml"
 
 # Hook 处理器超时（毫秒）。after_response 内含一次 Runner→Host 的 RPC（context.append），
 # 给出充足余量避免 Host 端默认 6s 超时截断。
@@ -360,6 +365,54 @@ def _migrate_legacy_baked_defaults(config: dict[str, Any]) -> tuple[dict[str, An
     return config, changed
 
 
+def _is_runner_generated_bare_config(config_path: Path) -> bool:
+    """判断 ``config.toml`` 是否为 Runner/WebUI 重置后生成的无注释空壳。"""
+    if not config_path.exists():
+        return True
+    try:
+        text = config_path.read_text(encoding="utf-8")
+        raw = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError):
+        return True
+    if any(line.lstrip().startswith("#") for line in text.splitlines()):
+        return False
+    veto = raw.get("veto")
+    return not isinstance(veto, dict) or not veto
+
+
+def _restore_shipped_config_template(plugin_dir: Path) -> bool:
+    """用插件自带的 ``config.default.toml`` 覆盖 Runner 生成的空壳配置。"""
+    config_path = plugin_dir / "config.toml"
+    template_path = plugin_dir / SHIPPED_CONFIG_TEMPLATE_NAME
+    if not template_path.exists() or not _is_runner_generated_bare_config(config_path):
+        return False
+    shutil.copy2(template_path, config_path)
+    return True
+
+def _ensure_shipped_config_present(plugin_dir: Path) -> bool:
+    """若缺少运行期 ``config.toml``，从 ``config.default.toml`` 复制一份。
+
+    Host Runner 在 ``on_load`` 之前读取配置；必须在 ``create_plugin`` 阶段
+    落盘带注释的模板，否则会先写成无注释的模型默认值。
+    """
+    config_path = plugin_dir / "config.toml"
+    template_path = plugin_dir / SHIPPED_CONFIG_TEMPLATE_NAME
+    if config_path.exists() or not template_path.exists():
+        return False
+    shutil.copy2(template_path, config_path)
+    return True
+
+def _load_config_dict_from_disk(plugin_dir: Path) -> dict[str, Any] | None:
+    config_path = plugin_dir / "config.toml"
+    if not config_path.exists():
+        return None
+    try:
+        loaded = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
 class CorpusCallosumPlugin(MaiBotPlugin):
     """神经闭环反馈插件主体。"""
 
@@ -367,6 +420,7 @@ class CorpusCallosumPlugin(MaiBotPlugin):
 
     def __init__(self) -> None:
         super().__init__()
+        self._plugin_dir = Path(__file__).resolve().parent
         # 配置派生缓存，on_load / on_config_update 时刷新
         self._enabled: bool = True
         self._sentinel: str = DEFAULT_SENTINEL
@@ -397,6 +451,10 @@ class CorpusCallosumPlugin(MaiBotPlugin):
     # ------------------------------------------------------------------ #
     async def on_load(self) -> None:
         """插件加载：刷新配置缓存。"""
+        if _restore_shipped_config_template(self._plugin_dir):
+            restored = _load_config_dict_from_disk(self._plugin_dir)
+            if restored is not None:
+                self.set_plugin_config(restored)
         self._refresh_config()
         self.ctx.logger.info(
             "神经闭环反馈插件已加载（哨兵=<%s>，升级=%d 次，停用再审=%d 次/%.0f 秒）",
@@ -592,4 +650,5 @@ class CorpusCallosumPlugin(MaiBotPlugin):
 
 def create_plugin() -> CorpusCallosumPlugin:
     """创建插件实例。"""
+    _ensure_shipped_config_present(Path(__file__).resolve().parent)
     return CorpusCallosumPlugin()
