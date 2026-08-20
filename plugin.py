@@ -644,8 +644,9 @@ class CorpusCallosumPlugin(MaiBotPlugin):
         # 置空回复：reply 工具会静默失败，不向聊天流发送任何内容，
         # 思考循环继续，规划器下一轮可看到注入的再审理由。
         # 不设置 retry，避免触发 replyer 重生成循环。
-        kwargs["response"] = ""
-        return {"action": "continue", "modified_kwargs": kwargs}
+        # 只回写 response，避免把未改动的 output_items 回传后被 Host
+        # 当成 Item 修改而忽略正文置空。
+        return {"action": "continue", "modified_kwargs": {"response": ""}}
 
 
 def create_plugin() -> CorpusCallosumPlugin:

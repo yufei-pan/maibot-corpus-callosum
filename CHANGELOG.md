@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.3.4] - 2026-08-19
+
+### 修复
+
+- 再审置空回复时只回写 `response`，避免 1.2.0 Item-first Host 把原样 `output_items` 当成修改而忽略正文清空
+
 ## [1.3.3] - 2026-08-01
 
 ### 变更

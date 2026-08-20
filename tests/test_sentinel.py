@@ -41,5 +41,25 @@ def test_sentinel_does_not_match_without_block():
     assert _extract_reason("正常回复，没有哨兵") is None
 
 
-def test_sentinel_matches_first_block_when_multiple_present():
-    assert _extract_reason("<reject>第一次</reject>以及<reject>第二次</reject>") == "第一次"
+def test_veto_returns_only_empty_response() -> None:
+    """置空回复不得把 output_items 原样回传，以免 1.2.0 Host 忽略 response。"""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    plugin = CorpusCallosumPlugin()
+    plugin._set_context(
+        SimpleNamespace(
+            logger=MagicMock(),
+            maisaka=SimpleNamespace(context=SimpleNamespace(append=MagicMock())),
+        )
+    )
+    result = asyncio.run(
+        plugin.intercept_veto(
+            session_id="",
+            response="先说一句。<reject>规划器搞错了</reject>",
+            output_items=[{"item_type": "AssistantMessageItem"}],
+            item_schema_version=1,
+        )
+    )
+    assert result == {"action": "continue", "modified_kwargs": {"response": ""}}
